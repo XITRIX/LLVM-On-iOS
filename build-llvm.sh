@@ -1,237 +1,188 @@
-# Build LLVM XCFramework
-#
-# We assume that all required build tools (CMake, ninja, etc.) are either installed and accessible in $PATH.
+#!/usr/bin/env bash
 
-# Assume that this script is source'd at this repo root
-export REPO_ROOT=`pwd`
+set -euo pipefail
 
-### Setup the environment variable $targetBasePlatform and $targetArch from the platform-architecture string
-### Argument: the platform-architecture string, must be one of the following
-###
-###                 iphoneos iphonesimulator iphonesimulator-arm64 maccatalyst maccatalyst-arm64
-###
-### The base platform would be one of iphoneos iphonesimulator maccatalyst and the architecture
-### would be either arm64 or x86_64.
-setup_variables() {
-    local targetPlatformArch=$1
+LLVM_REVISION="ca7933e47d3a3451d81e72ac174dcb5aa28b59d1"
+LLVM_REVISION_SHORT="${LLVM_REVISION:0:16}"
+IOS_DEPLOYMENT_TARGET="26.0"
 
-    case $targetPlatformArch in
-        "iphoneos")
-            targetArch="arm64"
-            targetBasePlatform="iphoneos";;
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_ROOT="${BUILD_ROOT:-${REPO_ROOT}/.build}"
+SOURCE_ROOT="${BUILD_ROOT}/llvm-project-${LLVM_REVISION}"
+NATIVE_BUILD_ROOT="${BUILD_ROOT}/native-tools"
+IOS_BUILD_ROOT="${BUILD_ROOT}/iphoneos-arm64"
+INSTALL_ROOT="${BUILD_ROOT}/install/LLVM-iOS26-arm64"
+PACKAGE_ROOT="${BUILD_ROOT}/packages"
 
-        "iphonesimulator")
-            targetArch="x86_64"
-            targetBasePlatform="iphonesimulator";;
+download_llvm_source() {
+    if [[ -f "${SOURCE_ROOT}/.rpcs3-source-revision" ]] &&
+       [[ "$(<"${SOURCE_ROOT}/.rpcs3-source-revision")" == "${LLVM_REVISION}" ]]; then
+        return
+    fi
 
-        "iphonesimulator-arm64")
-            targetArch="arm64"
-            targetBasePlatform="iphonesimulator";;
+    rm -rf "${SOURCE_ROOT}"
+    mkdir -p "${BUILD_ROOT}"
 
-        "maccatalyst")
-            targetArch="x86_64"
-            targetBasePlatform="maccatalyst";;
+    local archive="${BUILD_ROOT}/llvm-project-${LLVM_REVISION}.tar.gz"
+    curl --fail --location --retry 5 \
+        --output "${archive}" \
+        "https://github.com/llvm/llvm-project/archive/${LLVM_REVISION}.tar.gz"
 
-        "maccatalyst-arm64")
-            targetArch="arm64"
-            targetBasePlatform="maccatalyst";;
-
-        *)
-            echo "Unknown or missing platform!"
-            exit 1;;
-    esac
+    local extracted="${BUILD_ROOT}/llvm-project-${LLVM_REVISION}"
+    tar -xzf "${archive}" -C "${BUILD_ROOT}"
+    [[ -d "${extracted}" ]]
+    printf '%s\n' "${LLVM_REVISION}" > "${SOURCE_ROOT}/.rpcs3-source-revision"
 }
 
-### Build libffi for a given platform
-### Argument: the platform-architecture
-build_libffi() {
-    local targetPlatformArch=$1
-    setup_variables $targetPlatformArch
+build_native_tablegen() {
+    download_llvm_source
 
-    echo "Build libffi for $targetPlatformArch"
-
-    cd $REPO_ROOT
-    local libffiReleaseSrcArchiveUrl=https://github.com/libffi/libffi/archive/refs/tags/v3.4.4.tar.gz
-    local libffiReleaseUrl=https://github.com/libffi/libffi/releases/download/v3.4.4/libffi-3.4.4.tar.gz
-    # test -d libffi || git clone https://github.com/libffi/libffi.git
-    # curl -L -o libffi.tar.gz $libffiReleaseSrcArchive
-    curl -L -o libffi.tar.gz $libffiReleaseUrl
-    tar xzf libffi.tar.gz
-    mv libffi-3.4.4 libffi
-    cd libffi
-
-    # Imitate libffi continuous integration .ci/build.sh script
-    # Note that we do not need to run autogen if we are using the 'release' $libffiReleaseUrl as libffi dev already
-    # runs it to generate configure script.
-    # It is only needed when using the source archive $libffiReleaseSrcArchiveUrl (zipped repo at certain commit)
-    # or when we build on the source repo.
-    # ./autogen.sh
-    ./generate-darwin-source-and-headers.py --only-ios
-
-    case $targetPlatformArch in
-        "iphoneos")
-            xcodeSdkArgs=(-sdk $targetBasePlatform);;
-
-        "iphonesimulator"|"iphonesimulator-arm64")
-            xcodeSdkArgs=(-sdk $targetBasePlatform -arch $targetArch);;
-
-        "maccatalyst"|"maccatalyst-arm64")
-            xcodeSdkArgs=(-arch $targetArch);; # Do not set SDK
-
-        *)
-            echo "Unknown or missing platform!"
-            exit 1;;
-    esac
-
-    # xcodebuild -list
-    # Note that we need to run xcodebuild twice
-    # The first run generates necessary headers whereas the second run actually compiles the library
-    local libffiBuildDir=$REPO_ROOT/libffi
-    for r in {1..2}; do
-        xcodebuild -scheme libffi-iOS "${xcodeSdkArgs[@]}" -configuration Release SYMROOT="$libffiBuildDir" # >/dev/null 2>/dev/null
-    done
-
-    local libffiInstallDir=$libffiBuildDir/Release-$targetBasePlatform
-    lipo -info $libffiInstallDir/libffi.a
-    mv $libffiInstallDir $REPO_ROOT/libffi-$targetPlatformArch
-}
-
-get_llvm_src() {
-    #git clone --single-branch --branch release/14.x https://github.com/llvm/llvm-project.git
-
-    curl -OL https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.3/llvm-project-20.1.3.src.tar.xz
-    tar xzf llvm-project-20.1.3.src.tar.xz
-    mv llvm-project-20.1.3.src llvm-project
-}
-
-### Prepare the LLVM built for usage in Xcode
-### Argument: the platform-architecture
-prepare_llvm() {
-    local targetPlatformArch=$1
-    local libffiInstallDir=$REPO_ROOT/libffi-$targetPlatformArch
-
-    echo "Prepare LLVM for $targetPlatformArch"
-    cd $REPO_ROOT/LLVM-$targetPlatformArch
-
-    # Copy libffi
-    cp -r $libffiInstallDir/include/ffi ./include/
-    cp $libffiInstallDir/libffi.a ./lib/
-
-    # Combine all *.a into a single llvm.a for ease of use
-    libtool -static -o llvm.a lib/*.a
-
-    # This is to check if we find platform 1 (macOS desktop) in the mixed with platform 6 (macCatalyst).
-    # This reveals that the assembly file blake3_sse41_x86-64_unix.S is not compiled for macCatalyst!
-    # Looking at BLAKE3 https://github.com/llvm/clangir/blob/main/llvm/lib/Support/BLAKE3/CMakeLists.txt
-    # reveals that we want to configure LLVM with LLVM_DISABLE_ASSEMBLY_FILES.
-    otool -l llvm.a
-
-    # Remove unnecessary lib files if packaging
-    rm -rf lib/*.a
-}
-
-### Build LLVM for a given iOS platform
-### Argument: the platform-architecture
-### Assumptions:
-###  * LLVM is checked out inside this repo
-###  * libffi is built at libffi-[platform]
-build_llvm() {
-    local targetPlatformArch=$1
-    local llvmProjectSrcDir=$REPO_ROOT/llvm-project
-    local llvmInstallDir=$REPO_ROOT/LLVM-$targetPlatformArch
-    local libffiInstallDir=$REPO_ROOT/libffi-$targetPlatformArch
-
-    setup_variables $targetPlatformArch
-
-    echo "Build llvm for $targetPlatformArch"
-
-    cd $REPO_ROOT
-    test -d llvm-project || get_llvm_src
-    cd llvm-project
-    rm -rf build
-    mkdir build
-    cd build
-
-    # https://opensource.com/article/18/5/you-dont-know-bash-intro-bash-arrays
-    # ;lld;libcxx;libcxxabi
-    local llvmCmakeArgs=(-G "Ninja" \
-        -DLLVM_ENABLE_PROJECTS="clang" \
-        -DLLVM_TARGETS_TO_BUILD="AArch64;X86" \
-        -DLLVM_BUILD_TOOLS=OFF \
-        -DCLANG_BUILD_TOOLS=OFF \
-        -DBUILD_SHARED_LIBS=OFF \
+    cmake -S "${SOURCE_ROOT}/llvm" -B "${NATIVE_BUILD_ROOT}" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLVM_TARGETS_TO_BUILD=AArch64 \
+        -DLLVM_ENABLE_PROJECTS= \
+        -DLLVM_INCLUDE_BENCHMARKS=OFF \
+        -DLLVM_INCLUDE_EXAMPLES=OFF \
+        -DLLVM_INCLUDE_TESTS=OFF \
+        -DLLVM_ENABLE_BINDINGS=OFF \
         -DLLVM_ENABLE_ZLIB=OFF \
         -DLLVM_ENABLE_ZSTD=OFF \
-        -DLLVM_ENABLE_THREADS=OFF \
-        -DLLVM_ENABLE_UNWIND_TABLES=OFF \
+        -DLLVM_ENABLE_TERMINFO=OFF \
+        -DLLVM_ENABLE_LIBEDIT=OFF \
+        -DLLVM_ENABLE_LIBXML2=OFF \
+        -DLLVM_ENABLE_CURL=OFF \
+        -DLLVM_ENABLE_HTTPLIB=OFF
+
+    cmake --build "${NATIVE_BUILD_ROOT}" --target llvm-tblgen
+    test -x "${NATIVE_BUILD_ROOT}/bin/llvm-tblgen"
+}
+
+build_ios_llvm() {
+    build_native_tablegen
+
+    local sdk_root
+    sdk_root="$(xcrun --sdk iphoneos --show-sdk-path)"
+
+    rm -rf "${IOS_BUILD_ROOT}" "${INSTALL_ROOT}"
+
+    cmake -S "${SOURCE_ROOT}/llvm" -B "${IOS_BUILD_ROOT}" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_SYSTEM_NAME=iOS \
+        -DCMAKE_OSX_SYSROOT="${sdk_root}" \
+        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET}" \
+        -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+        -DCMAKE_INSTALL_PREFIX="${INSTALL_ROOT}" \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DLLVM_TARGET_ARCH=AArch64 \
+        -DLLVM_TARGETS_TO_BUILD=AArch64 \
+        -DLLVM_DEFAULT_TARGET_TRIPLE=arm64-apple-ios26.0 \
+        -DLLVM_TABLEGEN="${NATIVE_BUILD_ROOT}/bin/llvm-tblgen" \
+        -DLLVM_NATIVE_TOOL_DIR="${NATIVE_BUILD_ROOT}/bin" \
+        -DLLVM_ENABLE_PROJECTS= \
+        -DLLVM_BUILD_LLVM_DYLIB=OFF \
+        -DLLVM_LINK_LLVM_DYLIB=OFF \
+        -DLLVM_BUILD_TOOLS=OFF \
+        -DLLVM_INCLUDE_TOOLS=OFF \
+        -DLLVM_INCLUDE_UTILS=OFF \
+        -DLLVM_INCLUDE_BENCHMARKS=OFF \
+        -DLLVM_INCLUDE_EXAMPLES=OFF \
+        -DLLVM_INCLUDE_TESTS=OFF \
+        -DLLVM_ENABLE_BINDINGS=OFF \
+        -DLLVM_ENABLE_THREADS=ON \
         -DLLVM_ENABLE_EH=OFF \
         -DLLVM_ENABLE_RTTI=OFF \
+        -DLLVM_ENABLE_FFI=OFF \
+        -DLLVM_ENABLE_ZLIB=OFF \
+        -DLLVM_ENABLE_ZSTD=OFF \
         -DLLVM_ENABLE_TERMINFO=OFF \
-        -DLLVM_ENABLE_FFI=ON \
-        -DLLVM_DISABLE_ASSEMBLY_FILES=ON \
-        -DFFI_INCLUDE_DIR=$libffiInstallDir/include/ffi \
-        -DFFI_LIBRARY_DIR=$libffiInstallDir \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=$llvmInstallDir \
-        -DCMAKE_TOOLCHAIN_FILE=../llvm/cmake/platforms/iOS.cmake)
+        -DLLVM_ENABLE_LIBEDIT=OFF \
+        -DLLVM_ENABLE_LIBXML2=OFF \
+        -DLLVM_ENABLE_CURL=OFF \
+        -DLLVM_ENABLE_HTTPLIB=OFF \
+        -DLLVM_ENABLE_LIBPFM=OFF \
+        -DLLVM_ENABLE_UNWIND_TABLES=OFF \
+        -DLLVM_DISABLE_ASSEMBLY_FILES=ON
 
-    case $targetPlatformArch in
-        "iphoneos")
-            llvmCmakeArgs+=(-DLLVM_TARGET_ARCH=$targetArch);;
-
-        "iphonesimulator"|"iphonesimulator-arm64")
-            llvmCmakeArgs+=(-DCMAKE_OSX_SYSROOT=$(xcodebuild -version -sdk iphonesimulator Path));;
-
-        "maccatalyst"|"maccatalyst-arm64")
-            llvmCmakeArgs+=(-DCMAKE_OSX_SYSROOT=$(xcodebuild -version -sdk macosx Path) \
-                -DCMAKE_C_FLAGS="-target $targetArch-apple-ios14.1-macabi" \
-                -DCMAKE_CXX_FLAGS="-target $targetArch-apple-ios14.1-macabi");;
-
-        *)
-            echo "Unknown or missing platform!"
-            exit 1;;
-    esac
-
-    llvmCmakeArgs+=(-DCMAKE_OSX_ARCHITECTURES=$targetArch)
-
-    # https://www.shell-tips.com/bash/arrays/
-    # https://www.lukeshu.com/blog/bash-arrays.html
-    printf 'CMake Argument: %s\n' "${llvmCmakeArgs[@]}"
-
-    # Generate configuration for building for iOS Target (on MacOS Host)
-    # Note: AArch64 = arm64
-    # Note: We have to use include/ffi subdir for libffi as the main header ffi.h
-    # includes <ffi_arm64.h> and not <ffi/ffi_arm64.h>. So if we only use
-    # $DOWNLOADS/libffi/Release-iphoneos/include for FFI_INCLUDE_DIR
-    # the platform-specific header would not be found!
-    cmake "${llvmCmakeArgs[@]}" ../llvm || exit -1 # >/dev/null 2>/dev/null
-
-    # When building for real iOS device, we need to open `build_ios/CMakeCache.txt` at this point, search for and FORCIBLY change the value of **HAVE_FFI_CALL** to **1**.
-    # For some reason, CMake did not manage to determine that `ffi_call` was available even though it really is the case.
-    # Without this, the execution engine is not built with libffi at all.
-    sed -i.bak 's/^HAVE_FFI_CALL:INTERNAL=/HAVE_FFI_CALL:INTERNAL=1/g' CMakeCache.txt
-
-    # Build and install
-    cmake --build . --target install # >/dev/null 2>/dev/null
-
-    prepare_llvm $targetPlatformArch
+    cmake --build "${IOS_BUILD_ROOT}" --target install
 }
 
-# Input: List of (base) platforms to be included in the XCFramework
-# Argument: the list of platform-architectures to include in the framework
-create_xcframework() {
-    local xcframeworkSupportedPlatforms=("$@")
+validate_ios_llvm() {
+    local required_libraries=(
+        libLLVMAArch64CodeGen.a
+        libLLVMCore.a
+        libLLVMExecutionEngine.a
+        libLLVMMCJIT.a
+        libLLVMPasses.a
+        libLLVMRuntimeDyld.a
+    )
 
-    # Construct xcodebuild arguments
-    local xcodebuildCreateXCFArgs=()
-    for p in "${xcframeworkSupportedPlatforms[@]}"; do
-        xcodebuildCreateXCFArgs+=(-library LLVM-$p/llvm.a -headers LLVM-$p/include)
+    test -f "${INSTALL_ROOT}/include/llvm/Config/llvm-config.h"
+    test -f "${INSTALL_ROOT}/lib/cmake/llvm/LLVMConfig.cmake"
+    grep -Eq '^#define LLVM_ENABLE_THREADS 1$' \
+        "${INSTALL_ROOT}/include/llvm/Config/llvm-config.h"
 
-        cd $REPO_ROOT
-        test -f libclang.tar.xz || echo "Create clang support headers archive" && tar -cJf libclang.tar.xz LLVM-$p/lib/clang/
+    local library
+    for library in "${required_libraries[@]}"; do
+        local path="${INSTALL_ROOT}/lib/${library}"
+        test -f "${path}"
+        [[ "$(lipo -archs "${path}")" == "arm64" ]]
     done
 
-    echo "Create XC framework with arguments ${xcodebuildCreateXCFArgs[@]}"
-    cd $REPO_ROOT
-    xcodebuild -create-xcframework "${xcodebuildCreateXCFArgs[@]}" -output LLVM.xcframework
+    local probe_root="${BUILD_ROOT}/validation"
+    rm -rf "${probe_root}"
+    mkdir -p "${probe_root}"
+
+    local archive="${INSTALL_ROOT}/lib/libLLVMCore.a"
+    local member
+    member="$(xcrun llvm-ar t "${archive}" | sed -n '1p')"
+    (
+        cd "${probe_root}"
+        xcrun llvm-ar x "${archive}" "${member}"
+        xcrun vtool -show-build "${member}" | grep -q 'platform IOS'
+        xcrun vtool -show-build "${member}" | grep -q 'minos 26.0'
+    )
 }
+
+package_ios_llvm() {
+    validate_ios_llvm
+    mkdir -p "${PACKAGE_ROOT}"
+
+    local build_revision="${GITHUB_SHA:-local}"
+    local build_revision_short="${build_revision:0:12}"
+    local base_name="LLVM-iOS26-arm64-${LLVM_REVISION_SHORT}-${build_revision_short}"
+    local archive="${PACKAGE_ROOT}/${base_name}.tar.xz"
+    local checksum="${archive}.sha256"
+    local manifest="${PACKAGE_ROOT}/${base_name}.json"
+
+    tar -cJf "${archive}" -C "$(dirname "${INSTALL_ROOT}")" "$(basename "${INSTALL_ROOT}")"
+    shasum -a 256 "${archive}" > "${checksum}"
+
+    printf '{\n' > "${manifest}"
+    printf '  "schema": 1,\n' >> "${manifest}"
+    printf '  "llvm_revision": "%s",\n' "${LLVM_REVISION}" >> "${manifest}"
+    printf '  "builder_revision": "%s",\n' "${build_revision}" >> "${manifest}"
+    printf '  "target": "arm64-apple-ios26.0",\n' >> "${manifest}"
+    printf '  "sdk": "%s",\n' "$(xcrun --sdk iphoneos --show-sdk-version)" >> "${manifest}"
+    printf '  "xcode": "%s",\n' "$(xcodebuild -version | tr '\n' ' ')" >> "${manifest}"
+    printf '  "archive": "%s",\n' "$(basename "${archive}")" >> "${manifest}"
+    printf '  "sha256": "%s"\n' "$(shasum -a 256 "${archive}" | awk '{print $1}')" >> "${manifest}"
+    printf '}\n' >> "${manifest}"
+
+    printf 'PACKAGE_ARCHIVE=%s\n' "${archive}"
+    printf 'PACKAGE_CHECKSUM=%s\n' "${checksum}"
+    printf 'PACKAGE_MANIFEST=%s\n' "${manifest}"
+}
+
+usage() {
+    printf 'Usage: %s <source|native-tools|build|validate|package>\n' "$0"
+}
+
+case "${1:-}" in
+    source) download_llvm_source ;;
+    native-tools) build_native_tablegen ;;
+    build) build_ios_llvm ;;
+    validate) validate_ios_llvm ;;
+    package) package_ios_llvm ;;
+    *) usage; exit 64 ;;
+esac
