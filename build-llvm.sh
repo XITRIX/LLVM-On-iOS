@@ -53,8 +53,9 @@ build_native_tablegen() {
         -DLLVM_ENABLE_CURL=OFF \
         -DLLVM_ENABLE_HTTPLIB=OFF
 
-    cmake --build "${NATIVE_BUILD_ROOT}" --target llvm-tblgen
+    cmake --build "${NATIVE_BUILD_ROOT}" --target llvm-tblgen llvm-min-tblgen
     test -x "${NATIVE_BUILD_ROOT}/bin/llvm-tblgen"
+    test -x "${NATIVE_BUILD_ROOT}/bin/llvm-min-tblgen"
 }
 
 build_ios_llvm() {
@@ -83,6 +84,7 @@ build_ios_llvm() {
         -DLLVM_BUILD_LLVM_DYLIB=OFF \
         -DLLVM_LINK_LLVM_DYLIB=OFF \
         -DLLVM_BUILD_TOOLS=OFF \
+        -DLLVM_BUILD_UTILS=OFF \
         -DLLVM_INCLUDE_TOOLS=OFF \
         -DLLVM_INCLUDE_UTILS=OFF \
         -DLLVM_INCLUDE_BENCHMARKS=OFF \
