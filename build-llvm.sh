@@ -158,7 +158,10 @@ package_ios_llvm() {
     local manifest="${PACKAGE_ROOT}/${base_name}.json"
 
     tar -cJf "${archive}" -C "$(dirname "${INSTALL_ROOT}")" "$(basename "${INSTALL_ROOT}")"
-    shasum -a 256 "${archive}" > "${checksum}"
+    local archive_digest
+    archive_digest="$(shasum -a 256 "${archive}" | awk '{print $1}')"
+    printf '%s  %s\n' "${archive_digest}" "$(basename "${archive}")" > "${checksum}"
+    (cd "${PACKAGE_ROOT}" && shasum -a 256 -c "$(basename "${checksum}")")
 
     printf '{\n' > "${manifest}"
     printf '  "schema": 1,\n' >> "${manifest}"
@@ -168,7 +171,7 @@ package_ios_llvm() {
     printf '  "sdk": "%s",\n' "$(xcrun --sdk iphoneos --show-sdk-version)" >> "${manifest}"
     printf '  "xcode": "%s",\n' "$(xcodebuild -version | tr '\n' ' ')" >> "${manifest}"
     printf '  "archive": "%s",\n' "$(basename "${archive}")" >> "${manifest}"
-    printf '  "sha256": "%s"\n' "$(shasum -a 256 "${archive}" | awk '{print $1}')" >> "${manifest}"
+    printf '  "sha256": "%s"\n' "${archive_digest}" >> "${manifest}"
     printf '}\n' >> "${manifest}"
 
     printf 'PACKAGE_ARCHIVE=%s\n' "${archive}"
