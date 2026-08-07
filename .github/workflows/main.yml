@@ -43,14 +43,15 @@ jobs:
         run: |
           ./build-llvm.sh package | tee package.env
           cat package.env >> "$GITHUB_OUTPUT"
+          mkdir -p release-packages
+          cp .build/packages/* release-packages/
 
       - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
         with:
           name: llvm-ios26-arm64-${{ github.sha }}
-          path: .build/packages/*
+          path: release-packages/*
           if-no-files-found: error
-          include-hidden-files: true
           retention-days: 90
 
       - name: Publish immutable release assets
@@ -60,7 +61,7 @@ jobs:
           tag="llvm-ios26-ca7933e47d3a3451-${GITHUB_SHA:0:12}"
           title="RPCS3 LLVM for iOS 26 (${GITHUB_SHA:0:12})"
           notes="Static arm64 iOS 26 LLVM libraries pinned to llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1. Includes headers, component archives, and LLVM CMake package files."
-          gh release create "$tag" .build/packages/* \
+          gh release create "$tag" release-packages/* \
             --target "$GITHUB_SHA" \
             --title "$title" \
             --notes "$notes"
