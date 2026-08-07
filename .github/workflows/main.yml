@@ -50,6 +50,7 @@ jobs:
           name: llvm-ios26-arm64-${{ github.sha }}
           path: .build/packages/*
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 90
 
       - name: Publish immutable release assets
