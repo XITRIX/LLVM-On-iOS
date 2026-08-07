@@ -106,7 +106,12 @@ build_ios_llvm() {
         -DLLVM_ENABLE_UNWIND_TABLES=OFF \
         -DLLVM_DISABLE_ASSEMBLY_FILES=ON
 
-    cmake --build "${IOS_BUILD_ROOT}" --target install
+    # Installing the aggregate target also pulls in cross-built host utilities.
+    # Only the component archives, headers, and CMake package are part of the SDK.
+    cmake --build "${IOS_BUILD_ROOT}" --target \
+        install-llvm-libraries \
+        install-llvm-headers \
+        install-cmake-exports
 }
 
 validate_ios_llvm() {
