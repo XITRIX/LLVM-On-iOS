@@ -142,10 +142,11 @@ validate_ios_llvm() {
 
     local archive="${INSTALL_ROOT}/lib/libLLVMCore.a"
     local member
-    member="$(xcrun llvm-ar t "${archive}" | sed -n '1p')"
+    member="$(xcrun ar -t "${archive}" | awk '/\.o$/ { print; exit }')"
+    test -n "${member}"
     (
         cd "${probe_root}"
-        xcrun llvm-ar x "${archive}" "${member}"
+        xcrun ar -x "${archive}" "${member}"
         xcrun vtool -show-build "${member}" | grep -q 'platform IOS'
         xcrun vtool -show-build "${member}" | grep -q 'minos 26.0'
     )
