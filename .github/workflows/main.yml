@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - build-llvm.sh
+      - patches/**
       - .github/workflows/main.yml
   workflow_dispatch:
 
@@ -60,7 +61,7 @@ jobs:
         run: |
           tag="llvm-ios26-ca7933e47d3a3451-${GITHUB_SHA:0:12}"
           title="RPCS3 LLVM for iOS 26 (${GITHUB_SHA:0:12})"
-          notes="Static arm64 iOS 26 LLVM libraries pinned to llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1. Includes headers, component archives, and LLVM CMake package files."
+          notes="Static arm64 iOS 26 LLVM libraries pinned to llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1. Includes the AArch64 GHC emergency spill-slot fix used by RPCS3, headers, component archives, and LLVM CMake package files."
           gh release create "$tag" release-packages/* \
             --target "$GITHUB_SHA" \
             --title "$title" \

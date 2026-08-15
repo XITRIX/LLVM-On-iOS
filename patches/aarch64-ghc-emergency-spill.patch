@@ -1,0 +1,35 @@
+From: RPCS3 iOS project
+Subject: [PATCH] AArch64: reserve a GHC emergency spill slot when needed
+
+RPCS3's PPU recompiler uses the GHC calling convention. A GHC function can
+still acquire stack objects after register allocation, even though it has no
+normal prologue or epilogue. Frame-index elimination may then require a scratch
+register; with the GHC reserved-register set, the scavenger needs a spill slot.
+
+The failure was diagnosed independently by the ARMSX3 project:
+https://github.com/ARMSX2/ARMSX3/commit/b5a715adcf6f81d210fa5fa4d45bc64857ee0f94
+
+diff --git a/llvm/lib/Target/AArch64/AArch64FrameLowering.cpp b/llvm/lib/Target/AArch64/AArch64FrameLowering.cpp
+--- a/llvm/lib/Target/AArch64/AArch64FrameLowering.cpp
++++ b/llvm/lib/Target/AArch64/AArch64FrameLowering.cpp
+@@ -2507 +2507,17 @@
+-  if (MF.getFunction().getCallingConv() == CallingConv::GHC)
++  if (MF.getFunction().getCallingConv() == CallingConv::GHC) {
++    // GHC functions can still acquire stack objects after register
++    // allocation. Frame-index elimination may then need a scratch register,
++    // while the GHC reserved-register set leaves no register to scavenge
++    // without an emergency spill slot.
++    MachineFrameInfo &GHCMFI = MF.getFrameInfo();
++
++    if (RS && GHCMFI.estimateStackSize(MF) > 0) {
++      const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
++      const TargetRegisterClass &RC = AArch64::GPR64RegClass;
++      int FI = GHCMFI.CreateSpillStackObject(TRI->getSpillSize(RC),
++                                             TRI->getSpillAlign(RC));
++      RS->addScavengingFrameIndex(FI);
++      LLVM_DEBUG(dbgs() << "GHC function with a frame, allocated fi#" << FI
++                        << " as the emergency spill slot.\n");
++    }
++
+@@ -2508,0 +2525 @@
++  }

@@ -6,6 +6,15 @@ The build is pinned to llvm-project commit
 `ca7933e47d3a3451d81e72ac174dcb5aa28b59d1`, matching the LLVM revision used by
 RPCS3 commit `3d587726a23f514be0e7c3ac43e2db0cf2fe931a`.
 
+The pinned source is built with
+[`patches/aarch64-ghc-emergency-spill.patch`](patches/aarch64-ghc-emergency-spill.patch),
+which reserves an AArch64 register-scavenging spill slot for GHC-convention
+functions that acquire a stack frame. This prevents a register-pressure failure
+seen in RPCS3 PPU recompilation. The failure and original fix were identified by
+[ARMSX3](https://github.com/ARMSX2/ARMSX3/commit/b5a715adcf6f81d210fa5fa4d45bc64857ee0f94);
+this repository carries a focused implementation against the exact pinned LLVM
+revision.
+
 ## Distribution
 
 Every successful `master` build publishes both a GitHub Actions artifact and an
@@ -15,7 +24,8 @@ immutable GitHub release. The release contains:
 - LLVM headers;
 - LLVM CMake package files;
 - a SHA-256 checksum; and
-- a JSON build manifest containing the source revision, target, SDK, and Xcode version.
+- a JSON build manifest containing the source revision, applied patch digest,
+  target, SDK, and Xcode version.
 
 The RPCS3 iOS build downloads one exact release asset and verifies its checksum.
 Prebuilt LLVM binaries are not committed to either repository.

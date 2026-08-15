@@ -7,6 +7,7 @@ LLVM_REVISION_SHORT="${LLVM_REVISION:0:16}"
 IOS_DEPLOYMENT_TARGET="26.0"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LLVM_PATCH="${REPO_ROOT}/patches/aarch64-ghc-emergency-spill.patch"
 BUILD_ROOT="${BUILD_ROOT:-${REPO_ROOT}/.build}"
 SOURCE_ROOT="${BUILD_ROOT}/llvm-project-${LLVM_REVISION}"
 NATIVE_BUILD_ROOT="${BUILD_ROOT}/native-tools"
@@ -14,9 +15,25 @@ IOS_BUILD_ROOT="${BUILD_ROOT}/iphoneos-arm64"
 INSTALL_ROOT="${BUILD_ROOT}/install/LLVM-iOS26-arm64"
 PACKAGE_ROOT="${BUILD_ROOT}/packages"
 
+llvm_patch_digest() {
+    test -f "${LLVM_PATCH}"
+    shasum -a 256 "${LLVM_PATCH}" | awk '{print $1}'
+}
+
+verify_patched_source() {
+    local frame_lowering="${SOURCE_ROOT}/llvm/lib/Target/AArch64/AArch64FrameLowering.cpp"
+    grep -Fq 'GHC functions can still acquire stack objects' "${frame_lowering}"
+    grep -Fq 'RS->addScavengingFrameIndex(FI);' "${frame_lowering}"
+}
+
 download_llvm_source() {
+    local patch_digest
+    patch_digest="$(llvm_patch_digest)"
+    local source_revision="${LLVM_REVISION}:${patch_digest}"
+
     if [[ -f "${SOURCE_ROOT}/.rpcs3-source-revision" ]] &&
-       [[ "$(<"${SOURCE_ROOT}/.rpcs3-source-revision")" == "${LLVM_REVISION}" ]]; then
+       [[ "$(<"${SOURCE_ROOT}/.rpcs3-source-revision")" == "${source_revision}" ]]; then
+        verify_patched_source
         return
     fi
 
@@ -31,7 +48,9 @@ download_llvm_source() {
     local extracted="${BUILD_ROOT}/llvm-project-${LLVM_REVISION}"
     tar -xzf "${archive}" -C "${BUILD_ROOT}"
     [[ -d "${extracted}" ]]
-    printf '%s\n' "${LLVM_REVISION}" > "${SOURCE_ROOT}/.rpcs3-source-revision"
+    patch --batch --forward -d "${SOURCE_ROOT}" -p1 < "${LLVM_PATCH}"
+    verify_patched_source
+    printf '%s\n' "${source_revision}" > "${SOURCE_ROOT}/.rpcs3-source-revision"
 }
 
 build_native_tablegen() {
@@ -158,6 +177,8 @@ package_ios_llvm() {
 
     local build_revision="${GITHUB_SHA:-local}"
     local build_revision_short="${build_revision:0:12}"
+    local patch_digest
+    patch_digest="$(llvm_patch_digest)"
     local base_name="LLVM-iOS26-arm64-${LLVM_REVISION_SHORT}-${build_revision_short}"
     local archive="${PACKAGE_ROOT}/${base_name}.tar.xz"
     local checksum="${archive}.sha256"
@@ -170,9 +191,11 @@ package_ios_llvm() {
     (cd "${PACKAGE_ROOT}" && shasum -a 256 -c "$(basename "${checksum}")")
 
     printf '{\n' > "${manifest}"
-    printf '  "schema": 1,\n' >> "${manifest}"
+    printf '  "schema": 2,\n' >> "${manifest}"
     printf '  "llvm_revision": "%s",\n' "${LLVM_REVISION}" >> "${manifest}"
     printf '  "builder_revision": "%s",\n' "${build_revision}" >> "${manifest}"
+    printf '  "patch": "%s",\n' "$(basename "${LLVM_PATCH}")" >> "${manifest}"
+    printf '  "patch_sha256": "%s",\n' "${patch_digest}" >> "${manifest}"
     printf '  "target": "arm64-apple-ios26.0",\n' >> "${manifest}"
     printf '  "sdk": "%s",\n' "$(xcrun --sdk iphoneos --show-sdk-version)" >> "${manifest}"
     printf '  "xcode": "%s",\n' "$(xcodebuild -version | tr '\n' ' ')" >> "${manifest}"
