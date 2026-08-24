@@ -1,4 +1,4 @@
-name: Build RPCS3 LLVM for iOS 26
+name: Build RPCS3 LLVM for iOS 15
 
 on:
   push:
@@ -12,8 +12,11 @@ on:
 permissions:
   contents: write
 
+env:
+  IOS_DEPLOYMENT_TARGET: "15.0"
+
 concurrency:
-  group: llvm-ios26-${{ github.ref }}
+  group: llvm-ios15-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -50,7 +53,7 @@ jobs:
       - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: llvm-ios26-arm64-${{ github.sha }}
+          name: llvm-ios15-arm64-${{ github.sha }}
           path: release-packages/*
           if-no-files-found: error
           retention-days: 90
@@ -59,9 +62,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="llvm-ios26-ca7933e47d3a3451-${GITHUB_SHA:0:12}"
-          title="RPCS3 LLVM for iOS 26 (${GITHUB_SHA:0:12})"
-          notes="Static arm64 iOS 26 LLVM libraries pinned to llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1. Includes the AArch64 GHC emergency spill-slot fix used by RPCS3, headers, component archives, and LLVM CMake package files."
+          tag="llvm-ios15-ca7933e47d3a3451-${GITHUB_SHA:0:12}"
+          title="RPCS3 LLVM for iOS 15 (${GITHUB_SHA:0:12})"
+          notes="Static arm64 iOS 15 LLVM libraries pinned to llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1. Includes the AArch64 GHC emergency spill-slot fix used by RPCS3, headers, component archives, and LLVM CMake package files."
           gh release create "$tag" release-packages/* \
             --target "$GITHUB_SHA" \
             --title "$title" \

@@ -20,7 +20,7 @@ revision.
 Every successful `master` build publishes both a GitHub Actions artifact and an
 immutable GitHub release. The release contains:
 
-- static arm64 libraries targeting iOS 26;
+- static arm64 libraries targeting iOS 15;
 - LLVM headers;
 - LLVM CMake package files;
 - a SHA-256 checksum; and
@@ -33,10 +33,14 @@ Prebuilt LLVM binaries are not committed to either repository.
 ## Configuration
 
 The workflow first builds a native `llvm-tblgen`, then cross-compiles LLVM for
-`arm64-apple-ios26.0`. It enables LLVM threading and the AArch64 target while
+`arm64-apple-ios15.0`. It enables LLVM threading and the AArch64 target while
 disabling Clang, libffi, tests, installed tools, RTTI, exceptions, zlib, and zstd.
 Component archives are preserved so RPCS3 can select Core, ExecutionEngine,
 MCJIT, Passes, and their transitive dependencies through `LLVMConfig.cmake`.
+
+Set `IOS_DEPLOYMENT_TARGET` to build for a higher deployment target. The builder
+rejects targets below iOS 15.0 so its output remains compatible with the minimum
+supported Xcode 27 deployment floor.
 
 ## Local build
 
