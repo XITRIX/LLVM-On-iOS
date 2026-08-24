@@ -4,7 +4,23 @@ set -euo pipefail
 
 LLVM_REVISION="ca7933e47d3a3451d81e72ac174dcb5aa28b59d1"
 LLVM_REVISION_SHORT="${LLVM_REVISION:0:16}"
-IOS_DEPLOYMENT_TARGET="26.0"
+IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-15.0}"
+
+if [[ ! "${IOS_DEPLOYMENT_TARGET}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    printf 'IOS_DEPLOYMENT_TARGET must use major.minor form (received %s)\n' \
+        "${IOS_DEPLOYMENT_TARGET}" >&2
+    exit 64
+fi
+
+IOS_DEPLOYMENT_MAJOR="${IOS_DEPLOYMENT_TARGET%%.*}"
+if (( IOS_DEPLOYMENT_MAJOR < 15 )); then
+    printf 'IOS_DEPLOYMENT_TARGET must not be lower than 15.0 (received %s)\n' \
+        "${IOS_DEPLOYMENT_TARGET}" >&2
+    exit 64
+fi
+
+IOS_DEPLOYMENT_NAME="${IOS_DEPLOYMENT_TARGET%.0}"
+LLVM_TARGET_TRIPLE="arm64-apple-ios${IOS_DEPLOYMENT_TARGET}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LLVM_PATCH="${REPO_ROOT}/patches/aarch64-ghc-emergency-spill.patch"
@@ -12,7 +28,7 @@ BUILD_ROOT="${BUILD_ROOT:-${REPO_ROOT}/.build}"
 SOURCE_ROOT="${BUILD_ROOT}/llvm-project-${LLVM_REVISION}"
 NATIVE_BUILD_ROOT="${BUILD_ROOT}/native-tools"
 IOS_BUILD_ROOT="${BUILD_ROOT}/iphoneos-arm64"
-INSTALL_ROOT="${BUILD_ROOT}/install/LLVM-iOS26-arm64"
+INSTALL_ROOT="${BUILD_ROOT}/install/LLVM-iOS${IOS_DEPLOYMENT_NAME}-arm64"
 PACKAGE_ROOT="${BUILD_ROOT}/packages"
 
 llvm_patch_digest() {
@@ -96,7 +112,7 @@ build_ios_llvm() {
         -DBUILD_SHARED_LIBS=OFF \
         -DLLVM_TARGET_ARCH=AArch64 \
         -DLLVM_TARGETS_TO_BUILD=AArch64 \
-        -DLLVM_DEFAULT_TARGET_TRIPLE=arm64-apple-ios26.0 \
+        -DLLVM_DEFAULT_TARGET_TRIPLE="${LLVM_TARGET_TRIPLE}" \
         -DLLVM_TABLEGEN="${NATIVE_BUILD_ROOT}/bin/llvm-tblgen" \
         -DLLVM_NATIVE_TOOL_DIR="${NATIVE_BUILD_ROOT}/bin" \
         -DLLVM_ENABLE_PROJECTS= \
@@ -167,7 +183,7 @@ validate_ios_llvm() {
         cd "${probe_root}"
         xcrun ar -x "${archive}" "${member}"
         xcrun vtool -show-build "${member}" | grep -q 'platform IOS'
-        xcrun vtool -show-build "${member}" | grep -q 'minos 26.0'
+        xcrun vtool -show-build "${member}" | grep -q "minos ${IOS_DEPLOYMENT_TARGET}"
     )
 }
 
@@ -179,7 +195,7 @@ package_ios_llvm() {
     local build_revision_short="${build_revision:0:12}"
     local patch_digest
     patch_digest="$(llvm_patch_digest)"
-    local base_name="LLVM-iOS26-arm64-${LLVM_REVISION_SHORT}-${build_revision_short}"
+    local base_name="LLVM-iOS${IOS_DEPLOYMENT_NAME}-arm64-${LLVM_REVISION_SHORT}-${build_revision_short}"
     local archive="${PACKAGE_ROOT}/${base_name}.tar.xz"
     local checksum="${archive}.sha256"
     local manifest="${PACKAGE_ROOT}/${base_name}.json"
@@ -196,7 +212,7 @@ package_ios_llvm() {
     printf '  "builder_revision": "%s",\n' "${build_revision}" >> "${manifest}"
     printf '  "patch": "%s",\n' "$(basename "${LLVM_PATCH}")" >> "${manifest}"
     printf '  "patch_sha256": "%s",\n' "${patch_digest}" >> "${manifest}"
-    printf '  "target": "arm64-apple-ios26.0",\n' >> "${manifest}"
+    printf '  "target": "%s",\n' "${LLVM_TARGET_TRIPLE}" >> "${manifest}"
     printf '  "sdk": "%s",\n' "$(xcrun --sdk iphoneos --show-sdk-version)" >> "${manifest}"
     printf '  "xcode": "%s",\n' "$(xcodebuild -version | tr '\n' ' ')" >> "${manifest}"
     printf '  "archive": "%s",\n' "$(basename "${archive}")" >> "${manifest}"
